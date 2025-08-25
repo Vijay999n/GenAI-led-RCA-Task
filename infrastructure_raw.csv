@@ -1,0 +1,5 @@
+Server_ID,Hostname,IP_Address,OS,CPU_Cores,Memory_GB
+SRV-001,app#server1,192.168.1.10,Windows@2019,8*,32GB
+SRV-002,db@server2,192.168.1.11 ,Linux#Ubuntu20.04,16#,64 GB
+SRV-003,web$server3, 192.168.1.12,Redhat$8,32$,128-GB
+SRV-004,cache!server4,192.168.1.13,CentOS!7,4!,16GB 
