@@ -2,6 +2,7 @@
           
          python .\rca_lookup_LLM.py --description "on the remote desktop the memory  is full" 
 
+
   **rca_lookup_batch** - This will process all the incidents which are present in the incidets.csv file taking the summary column as input and do the search in KEDB if not found get the New RCA lookup
 
 
