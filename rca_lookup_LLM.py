@@ -82,7 +82,7 @@ def get_llm_suggestion(description):
                 {"role": "system", "content": "You are an expert incident analyst..."},
                 {"role": "user", "content": f"Incident: {description}\nSuggest RCA, workaround, and fix."}
             ],
-            temperature=0.5,
+            temperature=0.1
             max_tokens= 1000
         )
         return response.choices[0].message.content.strip()
