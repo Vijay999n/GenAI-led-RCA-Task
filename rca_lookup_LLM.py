@@ -5,7 +5,7 @@ import requests
 from openai import OpenAI
 
 client = OpenAI(
-    api_key="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",
+    api_key="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",
     base_url="https://api.groq.com/openai/v1"
 )
 
@@ -77,13 +77,25 @@ def find_rca(description, knowledge_base, model, threshold=0.5):
 def get_llm_suggestion(description):
     try:
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",  # Recommended replacement
-            messages=[
-                {"role": "system", "content": "You are an expert incident analyst..."},
-                {"role": "user", "content": f"Incident: {description}\nSuggest RCA, workaround, and fix."}
-            ],
-            temperature=0.1
-            max_tokens= 1000
+          model="llama-3.3-70b-versatile",
+          temperature=0.1,
+          top_p=0.1,
+          max_tokens=1000,
+          messages=[
+           { 
+            "role": "system",
+            "content": (
+                "You are an expert incident analyst. "
+                "Respond in a structured format with these sections: "
+                "Incident Summary, Root Cause, Workaround, Permanent Fix, and Preventative Measures. "
+                "Use bullet points or numbered lists. Be concise and factual."
+             )
+           },
+           {
+            "role": "user",
+            "content": f"Incident: {description}"
+           }
+         ]   
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
@@ -108,7 +120,7 @@ if __name__ == "__main__":
 
     # Find RCA
     rca_entry, score = find_rca(args.description, knowledge_base, model)
-    
+    print("searching the possible match in KEDB")
     if rca_entry:
         
         print("\n🎯 Known Pattern Detected in KEDB")
