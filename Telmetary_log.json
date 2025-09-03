@@ -1,0 +1,140 @@
+[
+  {
+    "trace_id": "trace-disk-healthy-1",
+    "spans": [
+      {
+        "span_id": "span-root-disk-healthy",
+        "parent_id": null,
+        "operation": "DiskUsageCheck",
+        "service": "Orders-Service",
+        "component": "disk_monitor",
+        "start_time": "2025-09-03T07:45:05.000Z",
+        "duration_ms": 10,
+        "status": "OK",
+        "tags": {
+          "disk_used_percent": 65.2,
+          "disk_free_gb": 34.8,
+          "mount_point": "/var/data",
+          "severity": "INFO"
+        },
+        "message": "Disk usage is within normal limits."
+      }
+    ]
+  },
+  {
+    "trace_id": "trace-disk-warning-1",
+    "spans": [
+      {
+        "span_id": "span-root-disk-warning",
+        "parent_id": null,
+        "operation": "DiskUsageCheck",
+        "service": "Database",
+        "component": "disk_monitor",
+        "start_time": "2025-09-03T08:12:47.000Z",
+        "duration_ms": 12,
+        "status": "WARN",
+        "tags": {
+          "disk_used_percent": 91.5,
+          "disk_free_gb": 2.3,
+          "mount_point": "/var/lib/postgresql",
+          "severity": "WARN"
+        },
+        "message": "Disk usage approaching critical threshold (>90%)."
+      }
+    ]
+  },
+  {
+    "trace_id": "trace-disk-error-1",
+    "spans": [
+      {
+        "span_id": "span-root-disk-error",
+        "parent_id": null,
+        "operation": "DiskUsageCheck",
+        "service": "Orders-Service",
+        "component": "disk_monitor",
+        "start_time": "2025-09-03T09:05:13.000Z",
+        "duration_ms": 15,
+        "status": "ERROR",
+        "tags": {
+          "disk_used_percent": 99.5,
+          "disk_free_gb": 0.5,
+          "mount_point": "/app/logs",
+          "severity": "ERROR"
+        },
+        "message": "Disk space critical—free space below 1%."
+      }
+    ]
+  },
+  {
+    "trace_id": "trace-db-success-001",
+    "spans": [
+      {
+        "span_id": "span-root-db-success",
+        "parent_id": null,
+        "operation": "HTTP POST /orders",
+        "service": "Orders-Service",
+        "component": "http_handler",
+        "start_time": "2025-09-03T08:00:00.000Z",
+        "duration_ms": 200,
+        "status": "OK",
+        "tags": {
+          "incident_signature": "db_high_cpu",
+          "error_code": "DB1001",
+          "host": "pg-node-1"
+        },
+        "message": "Order API request processed successfully."
+      },
+      {
+        "span_id": "span-db-query-success",
+        "parent_id": "span-root-db-success",
+        "operation": "ExecuteQuery",
+        "service": "Postgres-DB01",
+        "component": "query_executor",
+        "start_time": "2025-09-03T08:00:00.050Z",
+        "duration_ms": 140,
+        "status": "OK",
+        "tags": {
+          "cpu_percent": 55.0,
+          "query": "SELECT * FROM orders WHERE status = 'pending'"
+        },
+        "message": "Executed query in Postgres."
+      }
+    ]
+  },
+  {
+    "trace_id": "trace-db-failure-002",
+    "spans": [
+      {
+        "span_id": "span-root-db-failure",
+        "parent_id": null,
+        "operation": "HTTP POST /orders",
+        "service": "Orders-Service",
+        "component": "http_handler",
+        "start_time": "2025-09-03T09:00:00.000Z",
+        "duration_ms": 350,
+        "status": "ERROR",
+        "tags": {
+          "incident_signature": "db_high_cpu",
+          "error_code": "DB1001",
+          "host": "pg-node-1"
+        },
+        "message": "Order API failed due to DB slowness."
+      },
+      {
+        "span_id": "span-db-query-failure",
+        "parent_id": "span-root-db-failure",
+        "operation": "ExecuteQuery",
+        "service": "Postgres-DB01",
+        "component": "query_executor",
+        "start_time": "2025-09-03T09:00:00.050Z",
+        "duration_ms": 300,
+        "status": "ERROR",
+        "tags": {
+          "cpu_percent": 95.5,
+          "timeout": true
+        },
+        "message": "Postgres query timed out due to high CPU load."
+      }
+    ]
+  }
+]
