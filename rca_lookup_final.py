@@ -1,125 +1,136 @@
 import argparse
 import pandas as pd
 import json
-from sentence_transformers import SentenceTransformer, util
+import faiss
+import numpy as np
+from sentence_transformers import SentenceTransformer
 from openai import OpenAI
-from datetime import datetime
+import os
 
+# -------------------- CONFIG --------------------
 client = OpenAI(
-    api_key="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",
+    api_key="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",
     base_url="https://api.groq.com/openai/v1"
 )
 
-############################################
-# Loaders
-############################################
+KEDB_INDEX_FILE = "kedb.index"
+KEDB_META_FILE = "kedb_meta.json"
+TELEMETRY_INDEX_FILE = "telemetry.index"
+TELEMETRY_META_FILE = "telemetry_meta.json"
+
+# -------------------- UTILS --------------------
+def save_faiss_index(index, index_file, metadata, meta_file):
+    faiss.write_index(index, index_file)
+    with open(meta_file, "w") as f:
+        json.dump(metadata, f)
+
+
+def load_faiss_index(index_file, meta_file):
+    index = faiss.read_index(index_file)
+    with open(meta_file, "r") as f:
+        metadata = json.load(f)
+    return index, metadata
+
+
+# -------------------- DATA LOADING --------------------
 def load_data(incidents_path, kedb_path, telemetry_path):
-    """
-    Load incidents, KEDB, and telemetry logs.
-    """
     inc = pd.read_csv(incidents_path, dtype=str, keep_default_na=False)
     kedb = pd.read_csv(kedb_path, dtype=str, keep_default_na=False)
-
     with open(telemetry_path, "r") as f:
         telemetry = json.load(f)
-
     return inc, kedb, telemetry
 
 
-############################################
-# KEDB Embedding Builder
-############################################
-def build_kedb_embeddings(kedb, model):
-    knowledge_base = []
+# -------------------- FAISS HELPERS --------------------
+def build_faiss_index(texts, model):
+    embeddings = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
+    dim = embeddings.shape[1]
+    index = faiss.IndexFlatIP(dim)
+    index.add(embeddings)
+    return index, embeddings
+
+
+# -------------------- KEDB --------------------
+def prepare_kedb(kedb, model):
+    if os.path.exists(KEDB_INDEX_FILE) and os.path.exists(KEDB_META_FILE):
+        return load_faiss_index(KEDB_INDEX_FILE, KEDB_META_FILE)
+
+    texts, metadata = [], {}
+    idx = 0
 
     for _, row in kedb.iterrows():
         sig = row["signature"]
         phrases = [sig]
+        if row.get("example_phrases"):
+            phrases.extend([p.strip() for p in row["example_phrases"].split(";") if p.strip()])
 
-        if "example_phrases" in row and row["example_phrases"]:
-            extra = [p.strip() for p in row["example_phrases"].split(";") if p.strip()]
-            phrases.extend(extra)
+        for phrase in phrases:
+            texts.append(phrase)
+            metadata[str(idx)] = {
+                "signature": sig,
+                "rca": row["rca"],
+                "workaround": row["workaround"],
+                "permanent_fix": row["permanent_fix"],
+                "last_reviewed": row["last_reviewed"]
+            }
+            idx += 1
 
-        embeddings = model.encode(phrases, convert_to_tensor=True)
-
-        knowledge_base.append({
-            "signature": sig,
-            "embeddings": embeddings,
-            "rca": row["rca"],
-            "workaround": row["workaround"],
-            "permanent_fix": row["permanent_fix"],
-            "last_reviewed": row["last_reviewed"],
-        })
-
-    return knowledge_base
-
-
-############################################
-# RCA Finder (KEDB)
-############################################
-def find_rca(description, knowledge_base, model, threshold=0.5):
-    query_embedding = model.encode(description, convert_to_tensor=True)
-    best_score, best_entry = -1, None
-
-    for entry in knowledge_base:
-        cos_scores = util.cos_sim(query_embedding, entry["embeddings"])[0]
-        score = float(cos_scores.max())
-
-        if score > best_score:
-            best_score = score
-            best_entry = entry
-
-    return (best_entry, best_score) if best_score >= threshold else (None, best_score)
+    index, _ = build_faiss_index(texts, model)
+    save_faiss_index(index, KEDB_INDEX_FILE, metadata, KEDB_META_FILE)
+    return index, metadata
 
 
-############################################
-# Telemetry Search
-############################################
-def search_telemetry(description, telemetry_data, model, threshold=0.5):
-    """
-    Search telemetry logs for possible matches with incident description.
-    """
-    query_embedding = model.encode(description, convert_to_tensor=True)
-    best_score, best_entry = -1, None
+# -------------------- TELEMETRY --------------------
+def prepare_telemetry(telemetry, model):
+    if os.path.exists(TELEMETRY_INDEX_FILE) and os.path.exists(TELEMETRY_META_FILE):
+        return load_faiss_index(TELEMETRY_INDEX_FILE, TELEMETRY_META_FILE)
 
-    for trace in telemetry_data:
+    texts, metadata = [], {}
+    idx = 0
+
+    for trace in telemetry:
         for span in trace["spans"]:
-            span_text = span.get("message", "") + " " + span.get("operation", "")
-            span_embedding = model.encode(span_text, convert_to_tensor=True)
-            score = float(util.cos_sim(query_embedding, span_embedding)[0][0])
+            text = span["message"] + " " + span["operation"]
+            texts.append(text)
+            metadata[str(idx)] = {
+                "trace_id": trace["trace_id"],
+                "span_id": span["span_id"],
+                "service": span["service"],
+                "component": span["component"],
+                "status": span["status"],
+                "tags": span["tags"],
+                "message": span["message"],
+                "start_time": span["start_time"]
+            }
+            idx += 1
 
-            if score > best_score:
-                best_score = score
-                best_entry = {
-                    "trace_id": trace["trace_id"],
-                    "service": span.get("service"),
-                    "component": span.get("component"),
-                    "status": span.get("status"),
-                    "severity": span.get("tags", {}).get("severity", "N/A"),
-                    "start_time": span.get("start_time"),
-                    "message": span.get("message"),
-                    "tags": span.get("tags"),
-                }
-
-    return (best_entry, best_score) if best_score >= threshold else (None, best_score)
+    index, _ = build_faiss_index(texts, model)
+    save_faiss_index(index, TELEMETRY_INDEX_FILE, metadata, TELEMETRY_META_FILE)
+    return index, metadata
 
 
-############################################
-# LLM Suggestion
-############################################
+# -------------------- SEARCH --------------------
+def search_index(description, index, metadata, model, threshold=0.5):
+    q_emb = model.encode([description], convert_to_numpy=True, normalize_embeddings=True)
+    scores, ids = index.search(q_emb, k=1)
+    score, idx = scores[0][0], ids[0][0]
+    if score >= threshold and str(idx) in metadata:
+        return metadata[str(idx)], float(score)
+    return None, float(score)
+
+
+# -------------------- LLM --------------------
 def get_llm_suggestion(description, telemetry_context=None):
     try:
-        context_str = ""
+        context = ""
         if telemetry_context:
-            context_str = (
-                f"\nTelemetry Evidence:\n"
-                f"- Trace ID: {telemetry_context['trace_id']}\n"
-                f"- Service: {telemetry_context['service']}\n"
-                f"- Component: {telemetry_context['component']}\n"
-                f"- Status: {telemetry_context['status']} ({telemetry_context['severity']})\n"
-                f"- Time: {telemetry_context['start_time']}\n"
-                f"- Message: {telemetry_context['message']}\n"
-                f"- Tags: {telemetry_context['tags']}\n"
+            context = (
+                f"Telemetry Evidence:\n"
+                f"Service: {telemetry_context['service']} | Component: {telemetry_context['component']}\n"
+                f"Status: {telemetry_context['status']} | Severity: {telemetry_context['tags'].get('severity', 'N/A')}\n"
+                f"Time: {telemetry_context['start_time']}\n"
+                f"Message: {telemetry_context['message']}\n"
+                f"Tags: {telemetry_context['tags']}\n"
             )
 
         response = client.chat.completions.create(
@@ -137,10 +148,7 @@ def get_llm_suggestion(description, telemetry_context=None):
                         "Use bullet points or numbered lists. Be concise and factual."
                     )
                 },
-                {
-                    "role": "user",
-                    "content": f"Incident: {description}{context_str}"
-                }
+                {"role": "user", "content": f"Incident: {description}\n{context}"}
             ]
         )
         return response.choices[0].message.content.strip()
@@ -148,9 +156,7 @@ def get_llm_suggestion(description, telemetry_context=None):
         return f"❌ Error calling LLM: {e}"
 
 
-############################################
-# Main
-############################################
+# -------------------- MAIN --------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--description", required=True, help="Incident description")
@@ -162,14 +168,16 @@ if __name__ == "__main__":
     # Load data
     incidents, kedb, telemetry = load_data(args.incidents_csv, args.kedb_csv, args.telemetry_json)
 
-    # Load embedding model
+    # Load model
     model = SentenceTransformer("all-MiniLM-L6-v2")
 
-    # Step 1: Check KEDB
-    print("searching the possible match in KEDB...")
-    knowledge_base = build_kedb_embeddings(kedb, model)
-    rca_entry, score = find_rca(args.description, knowledge_base, model)
+    # Prepare indexes
+    kedb_index, kedb_meta = prepare_kedb(kedb, model)
+    telemetry_index, telemetry_meta = prepare_telemetry(telemetry, model)
 
+    # Step 1: Search KEDB
+    rca_entry, score = search_index(args.description, kedb_index, kedb_meta, model)
+    print("searching the possible match in KEDB...")
     if rca_entry:
         print("\n🎯 Known Pattern Detected in KEDB")
         print("input_description:", args.description)
@@ -179,12 +187,9 @@ if __name__ == "__main__":
         print("workaround:", rca_entry["workaround"])
         print("permanent_fix:", rca_entry["permanent_fix"])
         print("last_reviewed:", rca_entry["last_reviewed"])
-
     else:
-        # Step 2: Check Telemetry
         print("\n🔍 RCA Not Identified in KEDB, searching telemetry logs...")
-        telemetry_entry, t_score = search_telemetry(args.description, telemetry, model)
-
+        telemetry_entry, t_score = search_index(args.description, telemetry_index, telemetry_meta, model)
         if telemetry_entry:
             print("\n⚡ Incident correlated with telemetry data")
             print("input_description:", args.description)
@@ -192,18 +197,15 @@ if __name__ == "__main__":
             print("affected_service:", telemetry_entry["service"])
             print("component:", telemetry_entry["component"])
             print("status:", telemetry_entry["status"])
-            print("severity:", telemetry_entry["severity"])
+            print("severity:", telemetry_entry["tags"].get("severity", "N/A"))
             print("timestamp:", telemetry_entry["start_time"])
             print("message:", telemetry_entry["message"])
             print("tags:", telemetry_entry["tags"])
             print("🧠 Calling LLM with telemetry context...")
-
             suggestion = get_llm_suggestion(args.description, telemetry_entry)
-            print("🔍 Below is the LLM Suggestion:\n", suggestion.replace("*", ""))
-
+            print("🔍 Below is the LLM Suggestion:\n", suggestion)
         else:
-            # Step 3: Pure LLM
             print("\n❓ RCA Not Found in Telemetry either")
             print("🧠 Calling LLM for generic suggestion...")
             suggestion = get_llm_suggestion(args.description)
-            print("🔍 Below is the LLM Suggestion:\n", suggestion.replace("*", ""))
+            print("🔍 Below is the LLM Suggestion:\n", suggestion)
